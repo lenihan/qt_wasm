@@ -1,14 +1,17 @@
 # Setup prerequisites, build environment, third_party directory, .env file for running apps.
 #Requires -Version 7
 
+# Global variables (all caps)
 $ROOT_DIR = Resolve-Path $PSScriptRoot/..
 $REPOS_DIR = Resolve-Path $ROOT_DIR/..
 $QT_DIR = Join-Path $REPOS_DIR qt6
-$VCPKG_DIR = Join-Path $REPOS_DIR vcpkg
-
-if ($IsWindows) {$TRIPLET = "x64-windows"}  
-if ($IsLinux)   {$TRIPLET = "x64-linux"}    
-if ($IsMacOS)   {$TRIPLET = "x64-osx"}     
+if ($IsWindows) {$OS = "windows"}
+if ($IsLinux)   {$OS = "linux"}
+if ($IsMacOS)   {$OS = "osx"}
+$QT_BUILD_NATIVE_DIR = Join-Path $QT_DIR "build-$OS"
+$QT_BUILD_WASM_DIR = Join-Path $QT_DIR "build-wasm"
+$QT_INSTALL_NATIVE_DIR = Join-Path $QT_BUILD_NATIVE_DIR install
+$QT_INSTALL_WASM_DIR = Join-Path $QT_BUILD_WASM_DIR install
 
 function echo_command($cmd) {
     Write-Host $cmd -ForegroundColor Cyan
@@ -132,9 +135,7 @@ function setup_prerequisites {
 function setup_build_environment {
     Write-Host "Setup build environment..." -ForegroundColor Green
     if ($IsWindows) {
-        Push-Location .  # Next line can put us in ~/source/repos, fix that with Pop-Location
         & "$env:ProgramFiles\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64
-        Pop-Location
     }
 }
 
@@ -145,49 +146,52 @@ function setup_third_party {
     Write-Host "Git clone Qt..." -ForegroundColor Green
     #
     # clone qt, init repo
-    cd $REPOS_DIR
+    Set-Location $REPOS_DIR
     $QT_DIR_NAME = "qt6"
     git clone git://code.qt.io/qt/qt5.git $QT_DIR_NAME
     $QT_DIR = Join-Path $REPOS_DIR $QT_DIR_NAME
-    cd $QT_DIR
+    Set-Location $QT_DIR
     git switch v6.5.1 --detach # from `git tag`
     perl ./init-repository
     # NOTE: Assuming setup_build_environment() already called
     # 
-    # build native qt
     Write-Host "Build native Qt..." -ForegroundColor Green
-    if ($IsWindows) {$os = "windows"}
-    if ($IsLinux)   {$os = "linux"}
-    if ($IsMacOS)   {$os = "osx"}
-    $BUILD_NATIVE_DIR = Join-Path $QT_DIR "build-$os"
-    mkdir $BUILD_NATIVE_DIR
-    cd $BUILD_NATIVE_DIR
-    # configure qt, create ninja build files via cmake, set install to ./install dir
-    ../configure -prefix ./install
-    # build/install qt
-    cmake --build . --parallel
-    cmake --install .
-    #
-    # Install emsdk
-    Write-Host "Install/activate emsdk..." -ForegroundColor Green
-    cd $REPOS_DIR
-    # git clone https://github.com/emscripten-core/emsdk.git
-    $EMSDK_DIR = Join-Path $REPOS_DIR "emsdk"
-    cd $EMSDK_DIR
-    # Required emscripten version for Qt 3.6.1 is Emscripten 3.1.25 (from above https://doc.qt.io/qt-6/wasm.html)
-    ./emsdk install 3.1.25 
-    ./emsdk activate 3.1.25
-    . ./emsdk_env.ps1
-    #
-    # build wasm qt (from https://doc.qt.io/qt-6/wasm.html)
-    Write-Host "Build wasm Qt..." -ForegroundColor Green
-    cd $QT_DIR
-    $BUILD_WASM_DIR = Join-Path $QT_DIR "build-wasm"
-    mkdir $BUILD_WASM_DIR
-    cd $BUILD_WASM_DIR
-    ../configure -qt-host-path "$BUILD_NATIVE_DIR/install" -platform wasm-emscripten –prefix ./install 
-    cmake --build . --parallel 
-    cmake --install . 
+    if (Test-Path $QT_INSTALL_NATIVE_DIR) {
+        Write-Host "Skipping native Qt build, install directory exists:  $QT_INSTALL_NATIVE_DIR" -ForegroundColor Yellow
+    }
+    else {
+        # build native qt
+        mkdir $QT_BUILD_NATIVE_DIR -ErrorAction SilentlyContinue
+        Set-Location $QT_BUILD_NATIVE_DIR
+        # configure qt, create ninja build files via cmake, set install to ./install dir
+        ../configure -prefix ./install
+        # build/install qt
+        cmake --build . --parallel
+        cmake --install .
+        #
+        # Install emsdk
+        Write-Host "Install/activate emsdk..." -ForegroundColor Green
+        Set-Location $REPOS_DIR
+        # git clone https://github.com/emscripten-core/emsdk.git
+        $EMSDK_DIR = Join-Path $REPOS_DIR "emsdk"
+        Set-Location $EMSDK_DIR
+        # Required emscripten version for Qt 3.6.1 is Emscripten 3.1.25 (from above https://doc.qt.io/qt-6/wasm.html)
+        ./emsdk install 3.1.25 
+        ./emsdk activate 3.1.25
+        . ./emsdk_env.ps1
+    }
+    if (Test-Path $QT_INSTALL_WASM_DIR) {
+        Write-Host "Skipping wasm Qt build, install directory exists:  $QT_INSTALL_WASM_DIR" -ForegroundColor Yellow
+    }
+    else {
+        # build wasm qt (from https://doc.qt.io/qt-6/wasm.html)
+        Write-Host "Build wasm Qt..." -ForegroundColor Green
+        mkdir $QT_BUILD_WASM_DIR -ErrorAction SilentlyContinue
+        Set-Location $QT_BUILD_WASM_DIR
+        ../configure -qt-host-path "$BUILD_NATIVE_DIR/install" -platform wasm-emscripten –prefix ./install 
+        cmake --build . --parallel 
+        cmake --install . 
+    }
 }
 
 function setup_environment_file {
@@ -195,21 +199,36 @@ function setup_environment_file {
     $ENV_FILE = Join-Path $ROOT_DIR .env
     Write-Host "Generate environment file $ENV_FILE for running apps"  -ForegroundColor Green
 
+    # PATH environment variable
+    $QT_BIN_DIR = Join-Path $QT_INSTALL_NATIVE_DIR bin
+    $path_array = $env:PATH -Split [IO.Path]::PathSeparator
+    $new_path_array = @($QT_BIN_DIR) + $path_array | Select-Object -Unique
+    $PATH = $new_path_array -join [IO.Path]::PathSeparator
+
     # Output .env
     if ($IsWindows) {
 @"
-PATH=$env:PATH
+CMAKE_PREFIX_PATH=$QT_INSTALL_NATIVE_DIR
+PATH=$PATH
+QT_INSTALL_NATIVE_DIR=$QT_INSTALL_NATIVE_DIR
+QT_INSTALL_WASM_DIR=$QT_INSTALL_WASM_DIR
 VSCMD_ARG_TGT_ARCH=$env:VSCMD_ARG_TGT_ARCH
 "@ | Set-Content $ENV_FILE
     }
     if ($IsLinux) {
 @"
-PATH=$env:PATH
+CMAKE_PREFIX_PATH=$QT_INSTALL_NATIVE_DIR
+PATH=$PATH
+QT_INSTALL_NATIVE_DIR=$QT_INSTALL_NATIVE_DIR
+QT_INSTALL_WASM_DIR=$QT_INSTALL_WASM_DIR
 "@ | Set-Content $ENV_FILE
     }
     if ($IsMacOS) {
 @"
-PATH=$env:PATH
+CMAKE_PREFIX_PATH=$QT_INSTALL_NATIVE_DIR
+PATH=$PATH
+QT_INSTALL_NATIVE_DIR=$QT_INSTALL_NATIVE_DIR
+QT_INSTALL_WASM_DIR=$QT_INSTALL_WASM_DIR
 "@ | Set-Content $ENV_FILE
     }    
 
@@ -221,9 +240,6 @@ PATH=$env:PATH
         New-Item -ItemType File $VS_CODE_WORKSPACE_SETTINGS_PATH -Force | Out-Null
         $settings = New-Object -TypeName PSObject
     }
-    if ($IsWindows) {$os = "windows"}
-    if ($IsLinux)   {$os = "linux"}
-    if ($IsMacOS)   {$os = "osx"}
     $env = @{}
     Get-Content $ENV_FILE | ForEach-Object {
         $name, $value = $_ -split '='
@@ -238,7 +254,7 @@ PATH=$env:PATH
     $search_exclude             = @{"**/build" = $true; "third_party/vcpkg" = $true}
 
     # save settings
-    $settings | Add-Member -MemberType NoteProperty -Name "terminal.integrated.env.$os" -Value $terminal_integrated_env_os -Force
+    $settings | Add-Member -MemberType NoteProperty -Name "terminal.integrated.env.$OS" -Value $terminal_integrated_env_os -Force
     $settings | Add-Member -MemberType NoteProperty -Name "cmake.environment"           -Value $cmake_environment          -Force
     $settings | Add-Member -MemberType NoteProperty -Name "files.associations"          -Value $files_associations         -Force
     $settings | Add-Member -MemberType NoteProperty -Name "search.useIgnoreFiles"       -Value $search_useIgnoreFiles      -Force
@@ -246,7 +262,16 @@ PATH=$env:PATH
     $settings | ConvertTo-Json | Set-Content $VS_CODE_WORKSPACE_SETTINGS_PATH
 }
 
-setup_prerequisites
-setup_build_environment
-setup_third_party
-setup_environment_file
+try {
+    # save current directory
+    $working_directory_at_start = Get-Location
+    
+    setup_prerequisites
+    setup_build_environment
+    setup_third_party
+    setup_environment_file
+}
+finally {
+    # restore current directory
+    Set-Location $working_directory_at_start
+}
