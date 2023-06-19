@@ -188,7 +188,7 @@ function setup_third_party {
         Write-Host "Build wasm Qt..." -ForegroundColor Green
         mkdir $QT_BUILD_WASM_DIR -ErrorAction SilentlyContinue
         Set-Location $QT_BUILD_WASM_DIR
-        ../configure -qt-host-path "$BUILD_NATIVE_DIR/install" -platform wasm-emscripten –prefix ./install 
+        ../configure -qt-host-path "$BUILD_NATIVE_DIR/install" -platform wasm-emscripten -prefix ./install 
         cmake --build . --parallel 
         cmake --install . 
     }
