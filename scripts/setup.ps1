@@ -178,7 +178,9 @@ function setup_third_party {
         # Required emscripten version for Qt 3.6.1 is Emscripten 3.1.25 (from above https://doc.qt.io/qt-6/wasm.html)
         ./emsdk install 3.1.25 
         ./emsdk activate 3.1.25
-        . ./emsdk_env.ps1
+        if ($IsWindows) {. ./emsdk_env.ps1}
+        if ($IsLinux) {. ./emsdk_env.sh}
+        if ($IsMacOS) {. ./emsdk_env.sh}
     }
     if (Test-Path $QT_INSTALL_WASM_DIR) {
         Write-Host "Skipping wasm Qt build, install directory exists:  $QT_INSTALL_WASM_DIR" -ForegroundColor Yellow
