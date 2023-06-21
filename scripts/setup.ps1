@@ -121,14 +121,23 @@ function setup_prerequisites {
             exit           
         }
 
-        echo_command "brew install --cask visual-studio-code"
-        echo_command "brew install autoconf"
-        echo_command "brew install automake"
-        echo_command "brew install libtool"
-        echo_command "brew install nasm"
-        echo_command "brew install cmake"
-        echo_command "brew install autoconf-archive"
-        echo_command "brew install gettext"
+        # could not get `brew list visual-studio-code` to work
+        Write-Host "Installing visual-studio-code..." -ForegroundColor Green
+        $null = Get-Command code || brew install --cask "visual-studio-code" 
+
+        $packages = 
+            "autoconf",
+            "automake",
+            "libtool",
+            "nasm",
+            "cmake",
+            "autoconf-archive",
+            "gettext"
+
+        foreach($p in $packages) {
+            Write-Host "Installing $p..." -ForegroundColor Green
+            $null = brew list $p || brew install $p
+        }
     }
 }
 
@@ -161,13 +170,20 @@ function setup_third_party {
     }
     else {
         # build native qt
-        mkdir $QT_BUILD_NATIVE_DIR -ErrorAction SilentlyContinue
+        $null = mkdir $QT_BUILD_NATIVE_DIR -ErrorAction SilentlyContinue
         Set-Location $QT_BUILD_NATIVE_DIR
         # configure qt, create ninja build files via cmake, set install to ./install dir
         ../configure -prefix ./install
         # build/install qt
         cmake --build . --parallel
         cmake --install .
+    }
+    if (Test-Path $QT_INSTALL_WASM_DIR) {
+        Write-Host "Skipping wasm Qt build, install directory exists:  $QT_INSTALL_WASM_DIR" -ForegroundColor Yellow
+    }
+    else {
+        # build wasm qt (from https://doc.qt.io/qt-6/wasm.html)
+        Write-Host "Build wasm Qt..." -ForegroundColor Green
         #
         # Install emsdk
         Write-Host "Install/activate emsdk..." -ForegroundColor Green
@@ -178,23 +194,15 @@ function setup_third_party {
         # Required emscripten version for Qt 3.6.1 is Emscripten 3.1.25 (from above https://doc.qt.io/qt-6/wasm.html)
         ./emsdk install 3.1.25 
         ./emsdk activate 3.1.25
-        if ($IsWindows) {. ./emsdk_env.ps1}
-        if ($IsLinux) {. ./emsdk_env.sh}
-        if ($IsMacOS) {. ./emsdk_env.sh}
-    }
-    if (Test-Path $QT_INSTALL_WASM_DIR) {
-        Write-Host "Skipping wasm Qt build, install directory exists:  $QT_INSTALL_WASM_DIR" -ForegroundColor Yellow
-    }
-    else {
-        # build wasm qt (from https://doc.qt.io/qt-6/wasm.html)
-        Write-Host "Build wasm Qt..." -ForegroundColor Green
-        mkdir $QT_BUILD_WASM_DIR -ErrorAction SilentlyContinue
+        . ./emsdk_env.ps1 
+        $null = mkdir $QT_BUILD_WASM_DIR -ErrorAction SilentlyContinue
         Set-Location $QT_BUILD_WASM_DIR
-        ../configure -qt-host-path "$BUILD_NATIVE_DIR/install" -platform wasm-emscripten -prefix ./install 
+        ../configure -qt-host-path "$QT_BUILD_NATIVE_DIR/install" -platform wasm-emscripten -prefix ./install 
         cmake --build . --parallel 
         cmake --install . 
-    }
-}
+    }     
+}    
+
 
 function setup_environment_file {
     Write-Host "Setup environment file..." -ForegroundColor Green
